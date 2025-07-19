@@ -5,8 +5,31 @@ __pycache__/
 *.pyd
 .Python/
 env/
+.env/
 venv/
-*.env
-.idea/
-.vscode/
-.DS_Store
+.venv/
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+*.egg-info/
+.coverage
+.tox/
+.mypy_cache/
+.pytest_cache/
+*.sqlite3
+htmlcov/
+.ipynb_checkpoints
+.idea/ # For PyCharm/IntelliJ users
+*.log
+*.tmp
+*.bak
+
+# Machine Learning / Embeddings specific
+# Cache directory for Sentence Transformers models
+.cache/embedding_models/
+
+# If you were to persist the FAISS index to disk, you'd ignore it too:
+# faiss_index.bin
+# project_id_map.pkl
