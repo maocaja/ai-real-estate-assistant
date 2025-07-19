@@ -7,7 +7,7 @@ class ProjectUnit(BaseModel):
     bedrooms: Optional[int] = Field(None, alias="habitaciones")
     bathrooms: Optional[int] = Field(None, alias="baños")
     area_sqm: Optional[float] = Field(None, alias="area_m2")
-    price_from: Optional[float] = Field(None, alias="precio_desde")
+    price_from: Optional[float] = Field(None, alias="precio")
     parking: Optional[bool] = Field(None, alias="parqueadero")
     balcony: Optional[bool] = Field(None, alias="balcon")
     floor_material: Optional[str] = Field(None, alias="piso")
@@ -26,13 +26,17 @@ class Project(BaseModel):
     city: str = Field(..., alias="ciudad")
     zone: str = Field(..., alias="zona")
     general_description: str = Field(..., alias="descripcion_general")
-    amenities: Optional[List[str]] = None # This will be optional if not always present or not a list
+    amenities: Optional[List[str]] = Field(..., alias="amenidades")
     units: List[ProjectUnit] = Field(..., alias="unidades") # List of units within the project
     # Ensure other fields are included if they exist in your JSON and are relevant
     # For example, if 'precio' is at the top level, add:
-    price: Optional[float] = Field(None, alias="precio")
-    type_property: Optional[str] = Field(None, alias="tipo_propiedad")
+    price_min: Optional[float] = Field(None, alias="precio_minimo_desde")
+    price_max: Optional[float] = Field(None, alias="precio_maximo_hasta")
+    bedrooms_min: Optional[float] = Field(None, alias="habitaciones_minimo_desde")
+    type_property: Optional[str] = Field(None, alias="tipo")
     recommended_use: Optional[str] = Field(None, alias="tipo_uso_recomendado")
+    image_url: Optional[str] = Field(None, alias="imagen_url")
+    
 
 
 # Model for amenities data specifically for embedding worker

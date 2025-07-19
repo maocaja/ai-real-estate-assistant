@@ -1,5 +1,6 @@
 import openai
 from typing import List, Dict, Any, Optional
+import os
 
 from chat_api.config.settings import settings
 from chat_api.models.chat_models import Message, LLMRequest, LLMResponse # Reusamos los modelos de chat
@@ -15,34 +16,44 @@ class LLMClient:
             print("⚠️ WARNING: OpenAI API key is not set. Using default placeholder. This will likely cause authentication errors.")
             # En un entorno de producción, aquí podrías levantar una excepción o detener el servicio.
 
-    async def get_chat_completion(self, messages: List[Message], temperature: float = 0.7) -> LLMResponse:
+    async def get_chat_completion(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, temperature: float = 0.7) -> LLMResponse:
         """
-        Hace una llamada a la API de OpenAI para obtener una respuesta del chat.
+        Hace una llamada a la API de OpenAI para obtener una respuesta del chat,
+        con soporte para tool_calling.
         """
         if not openai.api_key or openai.api_key == "your_openai_api_key_here":
             raise ValueError("OpenAI API key is not set. Cannot call LLM.")
 
         try:
-            # Convierte la lista de modelos Message a un formato que la API de OpenAI entiende
-            # (que son diccionarios con 'role' y 'content')
             formatted_messages = [msg.model_dump() for msg in messages]
 
-            # Llama a la API de OpenAI de forma asíncrona
-            # Nota: La librería 'openai' maneja las llamadas asíncronas con 'await client.chat.completions.create'
-            # para versiones más recientes (>=1.0). Para versiones antiguas (<1.0), es 'await openai.ChatCompletion.acreate'
-            # Asegúrate de que tu versión de 'openai' sea compatible.
-            
-            # Usando la nueva sintaxis (openai >= 1.0)
             client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-            response = await client.chat.completions.create(
-                model=self.model_name,
-                messages=formatted_messages,
-                temperature=temperature,
-            )
-            
-            # Extrae el contenido de la respuesta
-            response_content = response.choices[0].message.content
-            return LLMResponse(response_content=response_content)
+
+            # Prepara los argumentos para la llamada a la API de OpenAI
+            api_call_kwargs = {
+                "model": self.model_name,
+                "messages": formatted_messages,
+                "temperature": temperature,
+            }
+
+            if tools:
+                api_call_kwargs["tools"] = tools
+                # Opcional: force tool calling if you always want it to try to use a tool
+                # api_call_kwargs["tool_choice"] = "auto" # Default, LLM decides
+                # api_call_kwargs["tool_choice"] = {"type": "function", "function": {"name": "your_function_name"}} # Force a specific tool
+
+            response = await client.chat.completions.create(**api_call_kwargs)
+
+            # Procesar la respuesta para ver si es texto o una llamada a función
+            choice = response.choices[0]
+            if choice.message.content:
+                return LLMResponse(response_content=choice.message.content)
+            elif choice.message.tool_calls:
+                # Convierte los objetos ToolCall a diccionarios planos para nuestro modelo
+                tool_calls_dicts = [tc.model_dump() for tc in choice.message.tool_calls]
+                return LLMResponse(tool_calls=tool_calls_dicts)
+            else:
+                return LLMResponse(response_content="Lo siento, no pude generar una respuesta o una llamada a herramienta.")
 
         except openai.AuthenticationError as e:
             print(f"❌ OpenAI API Authentication Error: {e}. Check your API key.")

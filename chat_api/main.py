@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 import asyncio
+from dotenv import load_dotenv
+load_dotenv()
 
 from chat_api.api.routes import router # Importa el router de las rutas
 from chat_api.config.settings import settings
