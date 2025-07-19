@@ -7,7 +7,35 @@ from data_service.models.project import Project, ProjectAmenitiesData # Import m
 router = APIRouter()
 project_repo = ProjectRepository() # Initialize the repository
 
-@router.get("/projects", response_model=List[Project]) # Use Project model for response
+# --- ESENCIAL: Este endpoint ESPECÍFICO debe ir ANTES del endpoint /{project_id} ---
+@router.get("/projects/amenities_data", response_model=List[ProjectAmenitiesData]) # Use ProjectAmenitiesData model
+async def get_project_amenities_for_embedding():
+    """
+    Returns project IDs and their amenities text,
+    formatted for the embedding worker.
+    """
+    if not project_repo.is_data_loaded():
+        # Consider returning 503 Service Unavailable if data is critical and not loaded
+        # Or an empty list if it's acceptable for the client to handle no data
+        raise HTTPException(status_code=503, detail="Data service not ready: Dataset not loaded.")
+    return project_repo.get_project_amenities_data()
+
+# --- Este endpoint GENERAL debe ir DESPUÉS de los endpoints más específicos con /projects/ ---
+@router.get("/projects/{project_id}", response_model=Dict[str, Any])
+async def get_project_details_by_id(project_id: str):
+    """
+    Retrieves full details for a specific project by its ID.
+    """
+    if not project_repo.is_data_loaded():
+        raise HTTPException(status_code=503, detail="Data service not ready: Dataset not loaded.")
+
+    project = project_repo.get_project_by_id(project_id)
+    if project:
+        return project
+    raise HTTPException(status_code=404, detail=f"Project with ID '{project_id}' not found.")
+
+
+@router.get("/projects", response_model=List[Dict[str, Any]])
 async def get_projects(
     city: Optional[str] = None,
     property_type: Optional[str] = None,
@@ -17,7 +45,7 @@ async def get_projects(
     min_bathrooms: Optional[int] = None,
     min_area_sqm: Optional[float] = None,
     recommended_use: Optional[str] = None,
-    project_name: Optional[str] = None
+    project_name: Optional[str] = None # Ensure this is here
 ):
     """
     Retrieves real estate projects based on structured filters.
@@ -34,23 +62,9 @@ async def get_projects(
         min_bathrooms=min_bathrooms,
         min_area_sqm=min_area_sqm,
         recommended_use=recommended_use,
-        project_name=project_name
+        project_name=project_name # Pass this to the repository
     )
     return projects
-
-
-@router.get("/projects/{project_id}", response_model=Project) # Use Project model for response
-async def get_project_details_by_id(project_id: str):
-    """
-    Retrieves full details for a specific project by its ID.
-    """
-    if not project_repo.is_data_loaded():
-        raise HTTPException(status_code=503, detail="Data service not ready: Dataset not loaded.")
-
-    project = project_repo.get_project_by_id(project_id)
-    if project:
-        return project
-    raise HTTPException(status_code=404, detail=f"Project with ID '{project_id}' not found.")
 
 
 @router.get("/projects/all_ids", response_model=List[str])
@@ -58,13 +72,6 @@ async def get_all_project_identifiers():
     """
     Returns a list of all available project IDs.
     """
+    if not project_repo.is_data_loaded():
+        return [] # Return empty list if data not loaded
     return project_repo.get_all_project_ids()
-
-
-@router.get("/projects/amenities_data", response_model=List[ProjectAmenitiesData]) # Use ProjectAmenitiesData model
-async def get_project_amenities_for_embedding():
-    """
-    Returns project IDs and their amenities text,
-    formatted for the embedding worker.
-    """
-    return project_repo.get_project_amenities_data()
