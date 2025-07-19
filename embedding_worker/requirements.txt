@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-pandas
-pydantic
-sentence-transformers # For generating embeddings
-faiss-cpu           # For efficient similarity search (CPU version)
-requests            # To make HTTP requests to the data-service
