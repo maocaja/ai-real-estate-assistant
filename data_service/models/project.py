@@ -17,6 +17,10 @@ class ProjectUnit(BaseModel):
     estimated_annual_appreciation_rate: Optional[float] = Field(None, alias="tasa_valorizacion_anual_estimada")
     estimated_investment_horizon_years: Optional[int] = Field(None, alias="horizonte_inversion_anos_estimado")
 
+class Coordinates(BaseModel):
+    lat: float
+    lng: float
+
 # Define a Pydantic model for a full project
 class Project(BaseModel):
     id: str
@@ -26,18 +30,20 @@ class Project(BaseModel):
     city: str = Field(..., alias="ciudad")
     zone: str = Field(..., alias="zona")
     general_description: str = Field(..., alias="descripcion_general")
-    amenities: Optional[List[str]] = Field(..., alias="amenidades")
     units: List[ProjectUnit] = Field(..., alias="unidades") # List of units within the project
-    # Ensure other fields are included if they exist in your JSON and are relevant
-    # For example, if 'precio' is at the top level, add:
+    amenities: Optional[List[str]] = Field(..., alias="amenidades")
+    estimated_delivery_date: Optional[str] = Field(None, alias="fecha_entrega_estimado")
+    coordinates: Optional[Coordinates] = Field(None, alias="coordenadas")
+    image_url: Optional[str] = Field(None, alias="imagen_url")
+    socioeconomic_level: Optional[float] = Field(None, alias="estrato")
+    short_term_rental: Optional[bool] = Field(None, alias="renta_corta")
+    type_property: Optional[str] = Field(None, alias="tipo")
+    area_min_square: Optional[float] = Field(None, alias="area_minima_m2_desde")
+    bathroom_min: Optional[float] = Field(None, alias="banios_minimo_desde")
+    bedrooms_min: Optional[float] = Field(None, alias="habitaciones_minimo_desde")
     price_min: Optional[float] = Field(None, alias="precio_minimo_desde")
     price_max: Optional[float] = Field(None, alias="precio_maximo_hasta")
-    bedrooms_min: Optional[float] = Field(None, alias="habitaciones_minimo_desde")
-    type_property: Optional[str] = Field(None, alias="tipo")
     recommended_use: Optional[str] = Field(None, alias="tipo_uso_recomendado")
-    image_url: Optional[str] = Field(None, alias="imagen_url")
-    
-
 
 # Model for amenities data specifically for embedding worker
 class ProjectAmenitiesData(BaseModel):

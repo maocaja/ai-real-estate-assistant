@@ -9,3 +9,5 @@ requests            # To make HTTP requests to the data-service
 # For OpenAI integration (example)
 openai
 python-dotenv # For loading environment variables from a .env file locally
+
+faiss-cpu

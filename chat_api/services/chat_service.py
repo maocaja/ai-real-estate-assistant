@@ -166,78 +166,92 @@ class ChatService:
                 if llm_response_or_tool_call.response_content:
                     # The LLM returned a final response directly — return it
                     return ChatResponse(response_message=llm_response_or_tool_call.response_content)
-                
-                elif llm_response_or_tool_call.tool_calls:
-                    # The LLM suggested one or more tool (function) calls
-                    tool_call_count += 1
 
-                    # --- Important: Add assistant message with tool_calls before executing any tool ---
+                elif llm_response_or_tool_call.tool_calls:
+                    tool_call_count += 1
+                    # IMPORTANT: Add the assistant's message with ALL tool_calls to the history FIRST.
+                    # Ensure tool_calls are converted to dictionaries for the OpenAI API.
                     messages_for_llm.append(Message(
                         role="assistant",
                         tool_calls=llm_response_or_tool_call.tool_calls
                     ))
 
-                    # Currently, only process the first tool call
-                    tool_call = llm_response_or_tool_call.tool_calls[0]
-                    function_name = tool_call["function"]["name"]
-                    function_args_str = tool_call["function"]["arguments"]
+                    # Process ALL tool calls suggested by the LLM
+                    tool_outputs = []
+                    for tool_call_dict in llm_response_or_tool_call.tool_calls:
+                        # Convert the Pydantic ToolCall object to a dictionary
+                        function_name = tool_call_dict["function"]["name"]
+                        function_args_str = tool_call_dict["function"]["arguments"]
+                        tool_call_id = tool_call_dict["id"] # Get the tool_call_id from the dict
 
-                    try:
-                        # Attempt to parse function arguments from JSON string
-                        function_args = json.loads(function_args_str)
-                    except json.JSONDecodeError:
-                        # Invalid argument format — report back to LLM
-                        error_message = f"Error: LLM returned invalid function arguments for {function_name}: {function_args_str}"
-                        messages_for_llm.append(Message(role="tool", content=error_message, name=function_name))
-                        print(error_message)
-                        continue  # Continue to next loop iteration
+                        try:
+                            # Attempt to parse function arguments from JSON string
+                            function_args = json.loads(function_args_str)
+                        except json.JSONDecodeError:
+                            # Invalid argument format – report back to LLM
+                            error_message = f"Error: LLM returned invalid function arguments for {function_name}: {function_args_str}"
+                            # Even for an error, we must provide a tool response for this tool_call_id
+                            tool_outputs.append(Message(role="tool", content=error_message, name=function_name, tool_call_id=tool_call_id))
+                            print(error_message)
+                            continue  # Skip to the next tool_call in the list
 
-                    print(f"✨ LLM suggested calling: {function_name} with args: {function_args}")
+                        print(f"✨ LLM suggested calling: {function_name} with args: {function_args}")
 
-                    function_response = "Lo siento, no pude ejecutar la herramienta."
+                        function_response_content = "Lo siento, no pude ejecutar la herramienta."
 
-                    # Attempt to execute the function from the appropriate client
-                    if hasattr(self.data_service_client, function_name):
-                        method = getattr(self.data_service_client, function_name)
-                        result = await method(**function_args)
-                        function_response = self._format_data_service_response(function_name, result)
+                        try:
+                            # Attempt to execute the function from the appropriate client
+                            if hasattr(self.data_service_client, function_name):
+                                method = getattr(self.data_service_client, function_name)
+                                result = await method(**function_args)
+                                function_response_content = self._format_data_service_response(function_name, result)
 
-                    elif hasattr(self.embedding_service_client, function_name):
-                        method = getattr(self.embedding_service_client, function_name)
-                        result = await method(**function_args)
-                        function_response = self._format_embedding_service_response(function_name, result)
+                            elif hasattr(self.embedding_service_client, function_name):
+                                method = getattr(self.embedding_service_client, function_name)
+                                result = await method(**function_args)
+                                function_response_content = self._format_embedding_service_response(function_name, result)
 
-                    elif hasattr(self.llm_client, function_name):
-                        function_response = "No se permite llamar a funciones internas del LLM."
+                            elif hasattr(self.llm_client, function_name):
+                                function_response_content = "No se permite llamar a funciones internas del LLM."
 
-                    else:
-                        function_response = f"Error: The function {function_name} does not exist or is not accessible."
+                            else:
+                                function_response_content = f"Error: The function {function_name} does not exist or is not accessible."
+                        except Exception as e:
+                            # Catch any runtime errors during tool execution
+                            print(f"❌ Error during tool execution for {function_name}: {e}")
+                            function_response_content = f"Error al ejecutar la herramienta {function_name}: {str(e)}"
 
-                    print(f"✅ Tool '{function_name}' responded: {function_response[:200]}...")
 
-                    # Add the tool's response so the LLM can continue the conversation
-                    messages_for_llm.append(Message(
-                        role="tool",
-                        name=function_name,
-                        content=function_response,
-                        tool_call_id=tool_call["id"]
-                    ))
+                        print(f"✅ Tool '{function_name}' responded: {function_response_content[:200]}...")
 
-                    # Continue the loop so the LLM can use the tool output to finish the reply
+                        # Add EACH tool's response as a separate tool message
+                        tool_outputs.append(Message(
+                            role="tool",
+                            name=function_name,
+                            content=function_response_content,
+                            tool_call_id=tool_call_id # <-- CRITICAL: Include the tool_call_id here
+                        ))
+
+                    # After processing ALL tool calls in the current LLM turn,
+                    # extend the messages list with all their outputs.
+                    messages_for_llm.extend(tool_outputs)
+
+                    # Continue the loop so the LLM can use the combined tool outputs to finalize the reply
+                    continue 
 
                 else:
-                    # Unexpected: LLM did not return a response or tool call
+                    # If we reach here, the LLM didn't return a response or tool call. This shouldn't happen normally.
                     print("❌ LLM did not return text or tool calls.")
-                    return ChatResponse(response_message="Sorry, something went wrong while processing your request.")
+                    return ChatResponse(response_message="Lo siento, ocurrió un error al procesar tu solicitud.")
 
             except Exception as e:
                 # General error while calling the LLM or tool
                 print(f"❌ Error during message handling or tool execution: {e}")
-                return ChatResponse(response_message="Sorry, I'm having trouble responding right now. Please try again later.")
+                return ChatResponse(response_message="Lo siento, estoy teniendo problemas para responder en este momento. Por favor, intenta más tarde.")
         
         # If maximum tool call attempts are exceeded without resolution
         print("⚠️ Maximum tool calls exceeded or LLM did not finalize response.")
-        return ChatResponse(response_message="Sorry, I couldn't complete your request after several attempts.")
+        return ChatResponse(response_message="Lo siento, no pude completar tu solicitud después de varios intentos")
 
     # --- Métodos Auxiliares para Formatear Respuestas de Herramientas ---
     # Estos métodos convierten los objetos Python obtenidos de los servicios en texto

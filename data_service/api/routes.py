@@ -21,7 +21,7 @@ async def get_project_amenities_for_embedding():
     return project_repo.get_project_amenities_data()
 
 # --- Este endpoint GENERAL debe ir DESPUÉS de los endpoints más específicos con /projects/ ---
-@router.get("/projects/{project_id}", response_model=Dict[str, Any])
+@router.get("/projects/{project_id}", response_model=Project)
 async def get_project_details_by_id(project_id: str):
     """
     Retrieves full details for a specific project by its ID.
