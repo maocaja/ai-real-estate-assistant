@@ -115,6 +115,7 @@ class ProjectRepository:
 
     def get_project_by_id(self, project_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a single project by its unique ID."""
+        print(f"Returning from repository: {self._projects_dict.get(project_id).keys() if self._projects_dict.get(project_id) else 'None'}")
         return self._projects_dict.get(project_id)
 
     def get_all_project_ids(self) -> List[str]:

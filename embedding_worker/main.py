@@ -1,57 +1,80 @@
-from fastapi import FastAPI
+# embedding_worker/main.py
+
+from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 import asyncio
+from dotenv import load_dotenv
+load_dotenv()
 
-from embedding_worker.api.routes import router, _build_index_background_task
-from embedding_worker.repository.embedding_repository import EmbeddingRepository
 from embedding_worker.config.settings import settings
+from embedding_worker.services.embedding_service import EmbeddingService # Importar el nuevo servicio
+from embedding_worker.models.embedding_model import SearchRequest, SearchResponse # Modelos para la API
 
-# Initialize the repository globally so it loads the model on startup
-# and can be accessed by the startup event.
-embedding_repo_instance = EmbeddingRepository()
+
+# Instancia global del EmbeddingService
+embedding_service_instance = EmbeddingService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Context manager for application startup and shutdown events.
-    Handles initial FAISS index build and periodic refreshes.
+    Initializes the embedding model and FAISS index.
     """
     print("🚀 Embedding Worker starting up...")
     
-    # Initial build of the FAISS index at startup
-    await _build_index_background_task() # Run initial build directly, not background task
+    # Initialize the embedding service (load model and build index)
+    await embedding_service_instance.initialize()
 
-    # Start periodic index refresh in the background
-    async def periodic_index_refresh():
-        while True:
-            await asyncio.sleep(settings.EMBEDDING_REFRESH_INTERVAL_SECONDS)
-            print(f"⏰ Initiating periodic index refresh (every {settings.EMBEDDING_REFRESH_INTERVAL_SECONDS} seconds)...")
-            await _build_index_background_task()
-
-    # Schedule the periodic task
-    periodic_task = asyncio.create_task(periodic_index_refresh())
-    
     yield # Application is running
 
-    # Shutdown events
+    # Shutdown events (none specific needed for embedding_worker for now)
     print("🛬 Embedding Worker shutting down...")
-    periodic_task.cancel() # Cancel the periodic task on shutdown
-    try:
-        await periodic_task # Await to ensure it's cancelled
-    except asyncio.CancelledError:
-        print("Periodic index refresh task cancelled.")
 
 app = FastAPI(
-    title="Embedding Worker - AI Real Estate Assistant",
-    description="Microservice for generating and searching project embeddings using FAISS.",
+    title="Embedding Worker",
+    description="Microservice for generating embeddings and performing vector search.",
     version="1.0.0",
     lifespan=lifespan # Link the lifespan function here
 )
-
-# Include API routes
-app.include_router(router)
 
 @app.get("/")
 async def read_root():
     """Simple root endpoint for health check."""
     return {"message": "Embedding Worker is running!"}
+
+@app.post("/search", response_model=SearchResponse)
+async def search_projects_endpoint(request: SearchRequest):
+    """
+    Endpoint to search for semantically similar projects.
+    """
+    if not embedding_service_instance.is_index_ready():
+        raise HTTPException(status_code=503, detail="Embedding index is not yet built. Please wait.")
+    
+    similar_ids = await embedding_service_instance.search_similar_projects(
+        query_text=request.query_text,
+        limit=request.limit # Assuming SearchRequest has a limit field, otherwise default to 5
+    )
+    return SearchResponse(similar_project_ids=similar_ids)
+
+@app.get("/health")
+async def health_check():
+    """
+    Provides a health check for the Embedding Worker, including FAISS index status.
+    """
+    status = "OK"
+    error = None
+    faiss_index_built = embedding_service_instance.is_index_ready()
+
+    if not embedding_service_instance.get_model():
+        status = "Degraded"
+        error = "Embedding model not loaded."
+    elif not faiss_index_built:
+        status = "Degraded"
+        error = "FAISS index not built."
+
+    return {
+        "status": status,
+        "message": "Embedding Worker is operational.",
+        "faiss_index_built": faiss_index_built,
+        "error": error
+    }

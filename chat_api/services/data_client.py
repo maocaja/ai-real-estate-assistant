@@ -44,6 +44,7 @@ class DataServiceClient:
         try:
             response = await self.client.get(f"/projects/{project_id}", timeout=10)
             response.raise_for_status()
+            print(f"Data from data-service for validation: {response.json().keys() if response.json() else 'None'}")
             return Project(**response.json())
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:

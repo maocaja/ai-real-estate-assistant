@@ -7,7 +7,7 @@ class Settings:
 
     # Hugging Face model name for embeddings (e.g., 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
     # This model is good for multilingual text, including Spanish.
-    EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
 
     # Path for a local cache of the embedding model (optional)
     MODEL_CACHE_DIR: str = os.path.join(os.path.dirname(__file__), "..", "..", ".cache", "embedding_models")
