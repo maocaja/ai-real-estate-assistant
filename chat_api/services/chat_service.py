@@ -23,15 +23,17 @@ class ChatService:
             "Siempre responde de manera concisa y útil, ofreciendo solo la información solicitada. "
             "Si un usuario pide buscar un proyecto con ciertas características, primero busca proyectos "
             "usando las herramientas disponibles y luego presenta la información relevante de esos proyectos. "
+            "Al presentar varios proyectos, resume su información clave (nombre, ciudad, tipo de propiedad, precio min/max) de forma que el usuario no necesite pedir los detalles de cada ID. "
             "No asumas información no proporcionada por las herramientas. Si no encuentras información "
             "relevante, dilo. Si te preguntan por un país diferente a Colombia, indica que tu expertise es Colombia."
             "IMPORTANTE: Utiliza las herramientas disponibles para responder a las preguntas de los usuarios."
             "Si la pregunta del usuario es una búsqueda de proyectos, DEBES usar la herramienta `get_filtered_projects`."
             "Si la pregunta del usuario es una descripción de amenidades que desea, DEBES usar la herramienta `search_similar_projects`."
             "Si el usuario pregunta por detalles de un proyecto específico por su ID, DEBES usar la herramienta `get_project_by_id`."
-            "**Si el usuario pregunta sobre financiación, cuotas, créditos o cómo adquirir un proyecto, DEBES usar la herramienta `get_financial_assessment`.** "
+            "**Si el usuario pregunta sobre financiación, cuotas, créditos, retorno de inversión (ROI), flujo de caja o cómo adquirir un proyecto, DEBES usar la herramienta `get_financial_assessment`.** "
             "**Para usar `get_financial_assessment`, necesitas el precio del proyecto, los ingresos mensuales del usuario y el plazo deseado del préstamo en años.** "
-            "**Si te falta alguno de estos datos, pregunta al usuario de forma educada para poder realizar el cálculo.** "
+            "**Si el usuario pregunta por análisis de inversión (ROI o flujo de caja), también necesitarás preguntar por el ingreso de alquiler mensual esperado, la tasa de apreciación anual esperada del inmueble y el horizonte de inversión en años.** "
+            "**Si te falta alguno de estos datos para el cálculo que solicita el usuario, pregúntale de forma educada para poder realizar el análisis completo.** "
             "**Si el usuario ya ha preguntado por un proyecto, intenta usar el precio de ese proyecto para la estimación financiera.**"
         )
 
@@ -128,28 +130,44 @@ class ChatService:
                 "type": "function",
                 "function": {
                     "name": "get_financial_assessment",
-                    "description": "Calcula una estimación de cuota mensual y el valor total a pagar para un proyecto de vivienda, basándose en el precio del proyecto, los ingresos mensuales del usuario y el plazo deseado del préstamo. Utilizar cuando el usuario pregunta sobre financiación, cuotas, créditos o cómo adquirir un proyecto.",
+                    "description": "Calcula una estimación de cuota mensual, valor total a pagar, y un análisis básico de inversión (ROI y flujo de caja) para un proyecto de vivienda. Utilizar cuando el usuario pregunta sobre financiación, cuotas, créditos, retorno de inversión, flujo de caja o cómo adquirir un proyecto.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "project_price": {
                                 "type": "number",
-                                "description": "El precio total del proyecto para el cálculo. Si el usuario no lo especifica pero ha preguntado por un proyecto, intenta obtenerlo de los detalles del proyecto. Es un valor en COP."
+                                "description": "El precio total del proyecto para el cálculo en COP. Es un valor en COP."
                             },
                             "monthly_income": {
                                 "type": "number",
-                                "description": "Los ingresos mensuales netos del usuario en COP. Pregunta al usuario si no lo proporciona."
+                                "description": "Los ingresos mensuales netos del usuario en COP."
                             },
                             "loan_term_years": {
                                 "type": "integer",
-                                "description": "El plazo deseado del préstamo en años (ej. 15, 20, 30). Pregunta al usuario si no lo proporciona."
+                                "description": "El plazo deseado del préstamo en años (ej. 15, 20, 30)."
                             },
                             "interest_rate_annual": {
                                 "type": "number",
                                 "description": "Opcional. La tasa de interés anual en porcentaje (ej. 12 para 12%). Si no se especifica, usa una tasa de interés predeterminada razonable para Colombia (ej. 12.0)."
+                            },
+                            "expected_rental_income_monthly": { # <-- NUEVO CAMPO
+                                "type": "number",
+                                "description": "Opcional. El ingreso de alquiler mensual estimado para el proyecto en COP. Necesario para el cálculo de flujo de caja y ROI."
+                            },
+                            "expected_annual_appreciation_rate": { # <-- NUEVO CAMPO
+                                "type": "number",
+                                "description": "Opcional. La tasa de apreciación anual esperada del valor del inmueble en porcentaje (ej. 5 para 5%). Necesario para el cálculo de ROI."
+                            },
+                            "annual_operating_costs_percentage": { # <-- NUEVO CAMPO
+                                "type": "number",
+                                "description": "Opcional. Porcentaje anual del precio del proyecto destinado a costos operativos y de mantenimiento (ej. 1 para 1%). Necesario para el cálculo de flujo de caja y ROI. Por defecto 1.0% si no se especifica."
+                            },
+                            "investment_horizon_years": { # <-- NUEVO CAMPO
+                                "type": "integer",
+                                "description": "Opcional. El horizonte de tiempo en años para el cálculo del ROI y flujo de caja (ej. 5, 10). Por defecto 10 años si no se especifica."
                             }
                         },
-                        "required": ["project_price", "monthly_income", "loan_term_years"]
+                        "required": ["project_price", "monthly_income", "loan_term_years"] # Los nuevos campos son opcionales por ahora
                     }
                 }
             }
@@ -326,7 +344,7 @@ class ChatService:
                 # or you'll need to define them with aliases in Project.
                 f"Baños: {data.bedrooms_min if data.bedrooms_min else 'N/A'}\n" # Assuming you add bedrooms_min to Project model
                 # Your Project model doesn't have area_maxima_m2_hasta, use min_area_sqm if that's what you have
-                f"Área: {data.area_sqm if data.area_sqm else 'N/A'} m²\n" # Assuming you add min_area_sqm to Project model
+                f"Área: {data.area_min_square if data.area_min_square else 'N/A'} m²\n" # Assuming you add min_area_sqm to Project model
                 f"Estado: {data.status if data.status else 'N/A'}\n" # Use project.status
                 #f"Fecha de Entrega: {data.delivery_date_estimated if project.delivery_date_estimated else 'N/A'}\n" # Use delivery_date_estimated
                 f"Amenidades: {amenities_text}\n" # Use amenities_text from above
@@ -346,26 +364,39 @@ class ChatService:
     
     def _format_financial_assessment_response(self, data: Dict[str, Any]) -> str:
         """
-        Formatea la respuesta del cálculo financiero para que el LLM la entienda.
+        Formatea la respuesta del cálculo financiero y de inversión para que el LLM la entienda.
         """
         if "error" in data:
             return f"Error en el cálculo financiero: {data['error']}"
 
-        project_price = "{:,.0f}".format(data['project_price']).replace(",", "_").replace("_", ",") # Formato con comas
-        loan_amount = "{:,.0f}".format(data['loan_amount']).replace(",", "_").replace("_", ",")
-        down_payment = "{:,.0f}".format(data['down_payment']).replace(",", "_").replace("_", ",")
-        monthly_payment = "{:,.0f}".format(data['monthly_payment']).replace(",", "_").replace("_", ",")
-        total_paid_with_interest = "{:,.0f}".format(data['total_paid_with_interest']).replace(",", "_").replace("_", ",")
+        # Formateo de números para mejor lectura
+        def format_currency(value):
+            return "{:,.0f}".format(value).replace(",", "_").replace("_", ",")
 
-        return (
-            f"Resultados de la estimación financiera:\n"
-            f"- **Precio total del proyecto**: ${project_price} COP\n"
-            f"- **Cuota inicial estimada (30%)**: ${down_payment} COP\n"
-            f"- **Monto del préstamo estimado (70%)**: ${loan_amount} COP\n"
-            f"- **Plazo del préstamo**: {data['loan_term_years']} años\n"
-            f"- **Tasa de interés anual simulada**: {data['annual_interest_rate']}%\n"
-            f"- **Cuota mensual estimada**: ${monthly_payment} COP\n"
-            f"- **Total pagado con intereses**: ${total_paid_with_interest} COP\n"
-            f"- **Mensaje de asequibilidad**: {data['affordability_message']}\n"
-            f"El LLM debe usar esta información para responder al usuario."
-        )
+        response_parts = [
+            f"Resultados de la estimación financiera para el proyecto de ${format_currency(data['project_price'])} COP:",
+            f"- **Cuota inicial estimada (30%)**: ${format_currency(data['down_payment'])} COP",
+            f"- **Monto del préstamo estimado (70%)**: ${format_currency(data['loan_amount'])} COP",
+            f"- **Plazo del préstamo**: {data['loan_term_years']} años",
+            f"- **Tasa de interés anual simulada**: {data['annual_interest_rate']}%",
+            f"- **Cuota mensual estimada del préstamo**: ${format_currency(data['monthly_loan_payment'])} COP",
+            f"- **Total pagado con intereses durante el plazo del préstamo**: ${format_currency(data['total_paid_with_interest'])} COP",
+            f"- **Mensaje de asequibilidad**: {data['affordability_message']}"
+        ]
+
+        # Añadir información de inversión si está disponible
+        if "roi_percentage" in data:
+            response_parts.append("\n--- Análisis de Inversión ---")
+            response_parts.append(f"- **Ingreso de alquiler mensual estimado**: ${format_currency(data['expected_rental_income_monthly'])} COP")
+            response_parts.append(f"- **Tasa de apreciación anual esperada**: {data['expected_annual_appreciation_rate']}%")
+            response_parts.append(f"- **Costos operativos anuales (% del valor del proyecto)**: {data['annual_operating_costs_percentage']}%")
+            response_parts.append(f"- **Horizonte de inversión**: {data['investment_horizon_years']} años")
+            response_parts.append(f"- **Valor futuro estimado del inmueble**: ${format_currency(data['future_property_value'])} COP")
+            response_parts.append(f"- **Flujo de caja anual estimado**: ${format_currency(data['annual_cash_flow'])} COP")
+            response_parts.append(f"- **Retorno de Inversión (ROI) estimado**: {data['roi_percentage']}%")
+        elif "investment_analysis_message" in data:
+            response_parts.append(f"\n--- Análisis de Inversión ---")
+            response_parts.append(data['investment_analysis_message'])
+
+        response_parts.append("\nEl LLM debe usar esta información para responder al usuario.")
+        return "\n".join(response_parts)

@@ -1,6 +1,10 @@
 import pandas as pd
 from typing import List, Dict, Any, Optional
 from data_service.config.settings import settings # Import settings
+import logging
+from data_service.models.project import Project
+
+logger = logging.getLogger(__name__)
 
 class ProjectRepository:
     """
@@ -113,10 +117,28 @@ class ProjectRepository:
 
         return filtered_df.head(settings.PROJECT_RESULTS_LIMIT).to_dict(orient='records')
 
-    def get_project_by_id(self, project_id: str) -> Optional[Dict[str, Any]]:
+    def get_project_by_id(self, project_id: str) -> Optional[Project]:
         """Retrieves a single project by its unique ID."""
-        print(f"Returning from repository: {self._projects_dict.get(project_id).keys() if self._projects_dict.get(project_id) else 'None'}")
-        return self._projects_dict.get(project_id)
+        logger.debug(f"Attempting to retrieve project with ID: '{project_id}'")
+        project_data = self._projects_dict.get(project_id)
+        
+        if project_data:
+            try:
+                # IMPORTANT: Ensure the 'id' field is present in the dictionary
+                # that Pydantic will validate.
+                # If 'id' is not inherently part of your project_data dictionary
+                # from the JSON, but is used as the dictionary key, add it here.
+                if 'id' not in project_data:
+                    project_data['id'] = project_id # Add the ID to the dictionary
+
+                return Project(**project_data)
+            except Exception as e:
+                logger.error(f"Error validating project data for ID {project_id}: {e}")
+                # Log the data that failed validation if it's not too large/sensitive
+                logger.error(f"Failing data (first 500 chars): {str(project_data)[:500]}")
+                return None
+        logger.debug(f"Project with ID '{project_id}' not found.")
+        return None
 
     def get_all_project_ids(self) -> List[str]:
         """Returns a list of all available project IDs."""
