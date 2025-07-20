@@ -102,8 +102,8 @@ class EmbeddingService:
                 f"Precios desde ${project.price_min}" if project.price_min else "",
                 f"hasta ${project.price_max}" if project.price_max else "",
                 f"{int(project.bedrooms_min)} habitaciones" if project.bedrooms_min else "",
-                f"{int(project.min_bathrooms)} baños" if hasattr(project, 'min_bathrooms') and project.min_bathrooms else "",
-                f"{int(project.min_area_sqm)} m2" if hasattr(project, 'min_area_sqm') and project.min_area_sqm else "",
+                f"{int(project.bathroom_min)} baños" if hasattr(project, 'bathroom_min') and project.bathroom_min else "",
+                f"{int(project.area_min_square)} m2" if hasattr(project, 'area_min_square') and project.area_min_square else "",
                 f"Uso: {project.recommended_use}" if project.recommended_use else ""
             ]
             if project.amenities:

@@ -77,73 +77,132 @@ class DataServiceClient:
         project_price: float,
         monthly_income: float,
         loan_term_years: int,
-        interest_rate_annual: float = 12.0 # Tasa de interés predeterminada (12% anual)
+        interest_rate_annual: float = 12.0, # Tasa de interés predeterminada (12% anual)
+        expected_rental_income_monthly: Optional[float] = None, # Nuevo parámetro
+        expected_annual_appreciation_rate: Optional[float] = None, # Nuevo parámetro
+        annual_operating_costs_percentage: Optional[float] = 1.0, # Nuevo parámetro, con valor por defecto
+        investment_horizon_years: Optional[int] = 10 # Nuevo parámetro, con valor por defecto
     ) -> Dict[str, Any]:
         """
-        Calcula una estimación de la cuota mensual de un préstamo hipotecario y el valor total a pagar.
+        Calcula una estimación de la cuota mensual de un préstamo hipotecario y el valor total a pagar,
+        además de un análisis básico de inversión (ROI y flujo de caja).
 
         Args:
             project_price (float): Precio total del inmueble.
             monthly_income (float): Ingresos mensuales del solicitante.
             loan_term_years (int): Plazo del préstamo en años.
-            interest_rate_annual (float): Tasa de interés anual en porcentaje (ej. 12 para 12%).
+            interest_rate_annual (float): Tasa de interés anual en porcentaje.
+            expected_rental_income_monthly (Optional[float]): Ingreso de alquiler mensual estimado.
+            expected_annual_appreciation_rate (Optional[float]): Tasa de apreciación anual esperada en porcentaje.
+            annual_operating_costs_percentage (Optional[float]): Porcentaje anual del precio del proyecto para costos operativos.
+            investment_horizon_years (Optional[int]): Horizonte de tiempo en años para el cálculo de inversión.
 
         Returns:
             Dict[str, Any]: Un diccionario con la cuota mensual estimada,
-                            el valor total del préstamo, y el total pagado con intereses.
-                            Retorna None o un diccionario vacío si los inputs no son válidos.
+                            el valor total del préstamo, el total pagado con intereses,
+                            y métricas de inversión como ROI y flujo de caja.
         """
         if project_price <= 0 or monthly_income <= 0 or loan_term_years <= 0 or interest_rate_annual <= 0:
             logger.warning("Invalid input for financial assessment.")
-            return {"error": "Los valores de entrada deben ser positivos."}
+            return {"error": "Los valores de entrada principales (precio, ingresos, plazo, tasa de interés) deben ser positivos."}
 
         try:
-            # Calcular la tasa de interés mensual
+            # --- Cálculos de Préstamo (Existentes) ---
             monthly_interest_rate = (interest_rate_annual / 100) / 12
-
-            # Número total de pagos
             num_payments = loan_term_years * 12
+            
+            loan_amount_percentage = 0.70 # 70% del valor del inmueble
+            loan_amount = project_price * loan_amount_percentage
+            down_payment = project_price * (1 - loan_amount_percentage)
 
-            # Asumir que el monto del préstamo es el 70% del valor del inmueble,
-            # lo típico para un crédito hipotecario en Colombia.
-            # Puedes ajustar esta lógica según las políticas que quieras simular.
-            loan_amount = project_price * 0.70 # Simulación del monto del préstamo
-            down_payment = project_price * 0.30 # Simulación de la cuota inicial
-
-            # Cálculo de la cuota mensual usando la fórmula de anualidad de préstamo
-            # M = P [ i(1 + i)^n ] / [ (1 + i)^n – 1]
-            # Donde:
-            # M = Pago mensual
-            # P = Monto principal del préstamo (loan_amount)
-            # i = Tasa de interés mensual
-            # n = Número total de pagos
-            if monthly_interest_rate == 0: # Evitar división por cero
-                monthly_payment = loan_amount / num_payments
+            if monthly_interest_rate == 0:
+                monthly_loan_payment = loan_amount / num_payments
             else:
-                monthly_payment = (
+                monthly_loan_payment = (
                     loan_amount
                     * (monthly_interest_rate * (1 + monthly_interest_rate) ** num_payments)
                     / ((1 + monthly_interest_rate) ** num_payments - 1)
                 )
 
-            total_paid_with_interest = monthly_payment * num_payments
+            total_paid_with_interest = monthly_loan_payment * num_payments
 
-            # Verificar asequibilidad (ejemplo: la cuota mensual no debe exceder el 30% del ingreso mensual)
-            if monthly_payment > (monthly_income * 0.30):
+            affordability_message = ""
+            if monthly_loan_payment > (monthly_income * 0.30):
                 affordability_message = "La cuota mensual estimada excede el 30% de tus ingresos, lo que podría dificultar la aprobación del crédito. Considera un plazo más largo o un proyecto de menor valor."
             else:
                 affordability_message = "La cuota mensual estimada parece asequible con tus ingresos."
 
-            return {
+            result = {
                 "project_price": project_price,
                 "loan_amount": round(loan_amount, 2),
                 "down_payment": round(down_payment, 2),
-                "monthly_payment": round(monthly_payment, 2),
+                "monthly_loan_payment": round(monthly_loan_payment, 2), # Renombrado para claridad
                 "total_paid_with_interest": round(total_paid_with_interest, 2),
                 "loan_term_years": loan_term_years,
                 "annual_interest_rate": interest_rate_annual,
                 "affordability_message": affordability_message
             }
+
+            # --- Cálculos de Inversión (NUEVOS) ---
+            if (expected_rental_income_monthly is not None and expected_rental_income_monthly > 0) and \
+               (expected_annual_appreciation_rate is not None and expected_annual_appreciation_rate >= 0) and \
+               (annual_operating_costs_percentage is not None and annual_operating_costs_percentage >= 0) and \
+               (investment_horizon_years is not None and investment_horizon_years > 0):
+                
+                # Convertir porcentajes a decimales
+                appreciation_rate_decimal = expected_annual_appreciation_rate / 100
+                annual_operating_costs_decimal = annual_operating_costs_percentage / 100
+
+                # Costos operativos anuales (basados en un porcentaje del precio del proyecto)
+                annual_operating_costs = project_price * annual_operating_costs_decimal
+
+                # Ingreso neto anual por alquiler (ingreso alquiler - cuota préstamo - costos operativos)
+                # Asumimos que la cuota del préstamo es un gasto de la inversión para el flujo de caja
+                net_rental_income_annual = (expected_rental_income_monthly * 12) - (monthly_loan_payment * 12) - annual_operating_costs
+                
+                # Valor futuro del inmueble (después del horizonte de inversión)
+                future_property_value = project_price * ((1 + appreciation_rate_decimal) ** investment_horizon_years)
+
+                # ROI (Return on Investment)
+                # ROI = (Ganancia de la Inversión - Costo de la Inversión) / Costo de la Inversión
+                # Ganancia de la inversión = (Valor futuro del inmueble - Monto del préstamo restante si se vende) + (Ingresos netos por alquiler acumulados)
+                # Simplificación para este ROI básico: (Valor futuro - Inversión inicial total) / Inversión inicial total
+                # Inversión inicial total = Cuota inicial + (posibles gastos de cierre, que aquí no consideramos)
+                
+                # ROI más simple: (Ganancia por apreciación + Ingresos netos acumulados) / Inversión inicial
+                # Inversión inicial = Cuota inicial (down_payment)
+                
+                # Ganancia total = (Apreciación del valor) + (Ingresos netos por alquiler acumulados)
+                # Apreciación del valor = future_property_value - project_price
+                
+                # Flujo de caja anual (simplificado)
+                annual_cash_flow = (expected_rental_income_monthly * 12) - annual_operating_costs - (monthly_loan_payment * 12)
+
+                # Calculo de ROI: (Ganancia total - Inversión inicial) / Inversión inicial
+                # Donde Ganancia total = (future_property_value - project_price) + (net_rental_income_annual * investment_horizon_years)
+                # Y Inversión inicial = down_payment (la cuota inicial)
+                
+                # Asegurarse de que la inversión inicial no sea cero para evitar división por cero
+                if down_payment > 0:
+                    total_gain = (future_property_value - project_price) + (net_rental_income_annual * investment_horizon_years)
+                    roi_percentage = (total_gain / down_payment) * 100
+                else:
+                    roi_percentage = 0 # O manejar como un caso especial si no hay cuota inicial
+
+                result.update({
+                    "expected_rental_income_monthly": expected_rental_income_monthly,
+                    "expected_annual_appreciation_rate": expected_annual_appreciation_rate,
+                    "annual_operating_costs_percentage": annual_operating_costs_percentage,
+                    "investment_horizon_years": investment_horizon_years,
+                    "future_property_value": round(future_property_value, 2),
+                    "annual_cash_flow": round(annual_cash_flow, 2),
+                    "roi_percentage": round(roi_percentage, 2)
+                })
+            else:
+                result["investment_analysis_message"] = "Se requiere el ingreso de alquiler mensual, la tasa de apreciación anual y el horizonte de inversión para realizar un análisis de ROI y flujo de caja."
+
+            return result
         except Exception as e:
             logger.error(f"Error calculating financial assessment: {e}")
             return {"error": f"No pude realizar el cálculo financiero debido a un error: {e}"}
+
