@@ -71,3 +71,79 @@ class DataServiceClient:
         except Exception as e:
             print(f"❌ An unexpected error occurred while fetching all project IDs: {e}")
             return []
+
+    async def get_financial_assessment(
+        self,
+        project_price: float,
+        monthly_income: float,
+        loan_term_years: int,
+        interest_rate_annual: float = 12.0 # Tasa de interés predeterminada (12% anual)
+    ) -> Dict[str, Any]:
+        """
+        Calcula una estimación de la cuota mensual de un préstamo hipotecario y el valor total a pagar.
+
+        Args:
+            project_price (float): Precio total del inmueble.
+            monthly_income (float): Ingresos mensuales del solicitante.
+            loan_term_years (int): Plazo del préstamo en años.
+            interest_rate_annual (float): Tasa de interés anual en porcentaje (ej. 12 para 12%).
+
+        Returns:
+            Dict[str, Any]: Un diccionario con la cuota mensual estimada,
+                            el valor total del préstamo, y el total pagado con intereses.
+                            Retorna None o un diccionario vacío si los inputs no son válidos.
+        """
+        if project_price <= 0 or monthly_income <= 0 or loan_term_years <= 0 or interest_rate_annual <= 0:
+            logger.warning("Invalid input for financial assessment.")
+            return {"error": "Los valores de entrada deben ser positivos."}
+
+        try:
+            # Calcular la tasa de interés mensual
+            monthly_interest_rate = (interest_rate_annual / 100) / 12
+
+            # Número total de pagos
+            num_payments = loan_term_years * 12
+
+            # Asumir que el monto del préstamo es el 70% del valor del inmueble,
+            # lo típico para un crédito hipotecario en Colombia.
+            # Puedes ajustar esta lógica según las políticas que quieras simular.
+            loan_amount = project_price * 0.70 # Simulación del monto del préstamo
+            down_payment = project_price * 0.30 # Simulación de la cuota inicial
+
+            # Cálculo de la cuota mensual usando la fórmula de anualidad de préstamo
+            # M = P [ i(1 + i)^n ] / [ (1 + i)^n – 1]
+            # Donde:
+            # M = Pago mensual
+            # P = Monto principal del préstamo (loan_amount)
+            # i = Tasa de interés mensual
+            # n = Número total de pagos
+            if monthly_interest_rate == 0: # Evitar división por cero
+                monthly_payment = loan_amount / num_payments
+            else:
+                monthly_payment = (
+                    loan_amount
+                    * (monthly_interest_rate * (1 + monthly_interest_rate) ** num_payments)
+                    / ((1 + monthly_interest_rate) ** num_payments - 1)
+                )
+
+            total_paid_with_interest = monthly_payment * num_payments
+
+            # Verificar asequibilidad (ejemplo: la cuota mensual no debe exceder el 30% del ingreso mensual)
+            if monthly_payment > (monthly_income * 0.30):
+                affordability_message = "La cuota mensual estimada excede el 30% de tus ingresos, lo que podría dificultar la aprobación del crédito. Considera un plazo más largo o un proyecto de menor valor."
+            else:
+                affordability_message = "La cuota mensual estimada parece asequible con tus ingresos."
+
+            return {
+                "project_price": project_price,
+                "loan_amount": round(loan_amount, 2),
+                "down_payment": round(down_payment, 2),
+                "monthly_payment": round(monthly_payment, 2),
+                "total_paid_with_interest": round(total_paid_with_interest, 2),
+                "loan_term_years": loan_term_years,
+                "annual_interest_rate": interest_rate_annual,
+                "affordability_message": affordability_message
+            }
+        except Exception as e:
+            logger.error(f"Error calculating financial assessment: {e}")
+            return {"error": f"No pude realizar el cálculo financiero debido a un error: {e}"}

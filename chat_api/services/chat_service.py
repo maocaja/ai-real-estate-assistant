@@ -29,6 +29,10 @@ class ChatService:
             "Si la pregunta del usuario es una búsqueda de proyectos, DEBES usar la herramienta `get_filtered_projects`."
             "Si la pregunta del usuario es una descripción de amenidades que desea, DEBES usar la herramienta `search_similar_projects`."
             "Si el usuario pregunta por detalles de un proyecto específico por su ID, DEBES usar la herramienta `get_project_by_id`."
+            "**Si el usuario pregunta sobre financiación, cuotas, créditos o cómo adquirir un proyecto, DEBES usar la herramienta `get_financial_assessment`.** "
+            "**Para usar `get_financial_assessment`, necesitas el precio del proyecto, los ingresos mensuales del usuario y el plazo deseado del préstamo en años.** "
+            "**Si te falta alguno de estos datos, pregunta al usuario de forma educada para poder realizar el cálculo.** "
+            "**Si el usuario ya ha preguntado por un proyecto, intenta usar el precio de ese proyecto para la estimación financiera.**"
         )
 
         self.tools = [
@@ -119,6 +123,35 @@ class ChatService:
                         "required": ["project_id"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_financial_assessment",
+                    "description": "Calcula una estimación de cuota mensual y el valor total a pagar para un proyecto de vivienda, basándose en el precio del proyecto, los ingresos mensuales del usuario y el plazo deseado del préstamo. Utilizar cuando el usuario pregunta sobre financiación, cuotas, créditos o cómo adquirir un proyecto.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_price": {
+                                "type": "number",
+                                "description": "El precio total del proyecto para el cálculo. Si el usuario no lo especifica pero ha preguntado por un proyecto, intenta obtenerlo de los detalles del proyecto. Es un valor en COP."
+                            },
+                            "monthly_income": {
+                                "type": "number",
+                                "description": "Los ingresos mensuales netos del usuario en COP. Pregunta al usuario si no lo proporciona."
+                            },
+                            "loan_term_years": {
+                                "type": "integer",
+                                "description": "El plazo deseado del préstamo en años (ej. 15, 20, 30). Pregunta al usuario si no lo proporciona."
+                            },
+                            "interest_rate_annual": {
+                                "type": "number",
+                                "description": "Opcional. La tasa de interés anual en porcentaje (ej. 12 para 12%). Si no se especifica, usa una tasa de interés predeterminada razonable para Colombia (ej. 12.0)."
+                            }
+                        },
+                        "required": ["project_price", "monthly_income", "loan_term_years"]
+                    }
+                }
             }
         ]
 
@@ -204,7 +237,10 @@ class ChatService:
                             if hasattr(self.data_service_client, function_name):
                                 method = getattr(self.data_service_client, function_name)
                                 result = await method(**function_args)
-                                function_response_content = self._format_data_service_response(function_name, result)
+                                if function_name == "get_financial_assessment":
+                                    function_response_content = self._format_financial_assessment_response(result)
+                                else:
+                                    function_response_content = self._format_data_service_response(function_name, result)
 
                             elif hasattr(self.embedding_service_client, function_name):
                                 method = getattr(self.embedding_service_client, function_name)
@@ -307,3 +343,29 @@ class ChatService:
             # Pero para mantenerlo simple, devolvemos los IDs. El LLM puede pedir detalles si lo necesita.
             return f"Se encontraron proyectos con IDs similares: {', '.join(data)}. El LLM puede preguntar por detalles de estos IDs si es necesario."
         return json.dumps(data)
+    
+    def _format_financial_assessment_response(self, data: Dict[str, Any]) -> str:
+        """
+        Formatea la respuesta del cálculo financiero para que el LLM la entienda.
+        """
+        if "error" in data:
+            return f"Error en el cálculo financiero: {data['error']}"
+
+        project_price = "{:,.0f}".format(data['project_price']).replace(",", "_").replace("_", ",") # Formato con comas
+        loan_amount = "{:,.0f}".format(data['loan_amount']).replace(",", "_").replace("_", ",")
+        down_payment = "{:,.0f}".format(data['down_payment']).replace(",", "_").replace("_", ",")
+        monthly_payment = "{:,.0f}".format(data['monthly_payment']).replace(",", "_").replace("_", ",")
+        total_paid_with_interest = "{:,.0f}".format(data['total_paid_with_interest']).replace(",", "_").replace("_", ",")
+
+        return (
+            f"Resultados de la estimación financiera:\n"
+            f"- **Precio total del proyecto**: ${project_price} COP\n"
+            f"- **Cuota inicial estimada (30%)**: ${down_payment} COP\n"
+            f"- **Monto del préstamo estimado (70%)**: ${loan_amount} COP\n"
+            f"- **Plazo del préstamo**: {data['loan_term_years']} años\n"
+            f"- **Tasa de interés anual simulada**: {data['annual_interest_rate']}%\n"
+            f"- **Cuota mensual estimada**: ${monthly_payment} COP\n"
+            f"- **Total pagado con intereses**: ${total_paid_with_interest} COP\n"
+            f"- **Mensaje de asequibilidad**: {data['affordability_message']}\n"
+            f"El LLM debe usar esta información para responder al usuario."
+        )
