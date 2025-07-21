@@ -34,3 +34,9 @@ htmlcov/
 # If you were to persist the FAISS index to disk, you'd ignore it too:
 # faiss_index.bin
 # project_id_map.pkl
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml
+.DS_Store
+**/.DS_Store
