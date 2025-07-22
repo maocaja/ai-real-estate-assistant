@@ -4,6 +4,8 @@ import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
+from fastapi.middleware.cors import CORSMiddleware
+
 from chat_api.api.routes import router # Importa el router de las rutas
 from chat_api.config.settings import settings
 from chat_api.services.llm_client import LLMClient # Importa LLMClient para la comprobación inicial de la clave API
@@ -52,6 +54,15 @@ app = FastAPI(
     description="Microservice for handling user chat interactions and orchestrating AI components.",
     version="1.0.0",
     lifespan=lifespan # Link the lifespan function here
+)
+
+# Configurar CORS para permitir el frontend local
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "https://www.inbestai.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Incluye las rutas de la API

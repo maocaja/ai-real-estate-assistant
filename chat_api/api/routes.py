@@ -20,10 +20,10 @@ router = APIRouter()
 # Esto asegura que los clientes internos (LLM, Data, Embedding) se inicialicen una vez.
 chat_service_instance = ChatService()
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat_with_assistant(request: ChatRequest):
+@router.post("/", response_model=ChatResponse)
+async def chat_with_assistant_root(request: ChatRequest):
     """
-    Handles a chat message from the user and returns a response from the AI assistant.
+    Handles a chat message from the user and returns a response from the AI assistant (root endpoint).
     """
     try:
         response = await chat_service_instance.handle_message(request)
@@ -31,7 +31,7 @@ async def chat_with_assistant(request: ChatRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Bad request: {e}")
     except Exception as e:
-        print(f"❌ Unhandled error in chat endpoint: {e}")
+        print(f"❌ Unhandled error in chat endpoint (root): {e}")
         raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
 @router.get("/health")
