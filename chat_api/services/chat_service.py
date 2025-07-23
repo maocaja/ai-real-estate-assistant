@@ -1,11 +1,13 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
+
 import json
 
 from chat_api.config.settings import settings
-from chat_api.models.chat_models import Message, ChatRequest, ChatResponse, LLMResponse
+from chat_api.models.chat_models import Message, ChatRequest, ChatResponse, LLMResponse, Project
 from chat_api.services.llm_client import LLMClient
 from chat_api.services.data_client import DataServiceClient
 from chat_api.services.embedding_client import EmbeddingServiceClient
+
 
 class ChatService:
     def __init__(self):
@@ -15,7 +17,6 @@ class ChatService:
 
         # Define el mensaje del sistema para guiar al LLM.
         # Esto le da al LLM su "rol" y algunas instrucciones iniciales.
-        # Define el mensaje del sistema para guiar al LLM.
         self.system_message_content = (
             "Eres un asistente de bienes raíces experto y amigable especializado en proyectos de vivienda "
             "en Colombia. Tu objetivo es ayudar a los usuarios a encontrar el proyecto ideal "
@@ -35,6 +36,7 @@ class ChatService:
             "**Si el usuario pregunta por análisis de inversión (ROI o flujo de caja), también necesitarás preguntar por el ingreso de alquiler mensual esperado, la tasa de apreciación anual esperada del inmueble y el horizonte de inversión en años.** "
             "**Si te falta alguno de estos datos para el cálculo que solicita el usuario, pregúntale de forma educada para poder realizar el análisis completo.** "
             "**Si el usuario ya ha preguntado por un proyecto, intenta usar el precio de ese proyecto para la estimación financiera.**"
+            "**Cuando la respuesta final contenga una lista de proyectos, asegúrate de que el LLM los devuelva en un formato JSON con las claves 'response_message' (el mensaje para el usuario) y 'recommended_projects' (una lista de objetos Project).**"
         )
 
         self.tools = [
@@ -190,6 +192,7 @@ class ChatService:
             ChatResponse: The response to be sent back to the user.
         """
         messages_for_llm: List[Message] = []
+        all_recommended_projects: List[Project] = [] # Lista para acumular proyectos recomendados
 
         # 1. Add the system prompt (guidance for the LLM)
         messages_for_llm.append(Message(role="system", content=self.system_message_content))
@@ -215,13 +218,51 @@ class ChatService:
                 )
 
                 if llm_response_or_tool_call.response_content:
-                    # The LLM returned a final response directly — return it
-                    return ChatResponse(response_message=llm_response_or_tool_call.response_content)
+                    # El LLM ha respondido con contenido final.
+                    # Intentar parsear como JSON si se espera un ChatResponse estructurado,
+                    # de lo contrario, tratar como texto plano.
+                    message_raw = llm_response_or_tool_call.response_content
+                    response_message = str(message_raw) # Default to raw string
+                    projects_from_llm = []
+
+                    if isinstance(message_raw, str):
+                        try:
+                            parsed_content = json.loads(message_raw)
+                            if isinstance(parsed_content, dict):
+                                response_message = parsed_content.get("response_message", str(message_raw))
+                                raw_projects = parsed_content.get("recommended_projects", [])
+                                # Convertir raw_projects a objetos Project si son diccionarios
+                                try:
+                                    projects_from_llm = [Project(**proj) for proj in raw_projects]
+                                except Exception as e:
+                                    print(f"Error al convertir proyectos del LLM a Project: {e}")
+                                    projects_from_llm = []
+                        except json.JSONDecodeError:
+                            # Not a JSON string, treat as plain text
+                            pass
+                    elif isinstance(message_raw, dict):
+                        # If LLM directly returns a dict (e.g., from a structured response mode)
+                        response_message = message_raw.get("response_message", str(message_raw))
+                        raw_projects = message_raw.get("recommended_projects", [])
+                        try:
+                            projects_from_llm = [Project(**proj) for proj in raw_projects]
+                        except Exception as e:
+                            print(f"Error al convertir proyectos del LLM a Project (dict): {e}")
+                            projects_from_llm = []
+
+                    # Combinar proyectos de la respuesta directa del LLM con los acumulados de las herramientas
+                    # Usar un conjunto para evitar duplicados si los IDs de proyecto son únicos
+                    unique_projects = {p.id: p for p in all_recommended_projects + projects_from_llm}.values()
+                    final_recommended_projects = list(unique_projects)
+
+                    return ChatResponse(
+                        response_message=response_message,
+                        recommended_projects=final_recommended_projects
+                    )
 
                 elif llm_response_or_tool_call.tool_calls:
                     tool_call_count += 1
                     # IMPORTANT: Add the assistant's message with ALL tool_calls to the history FIRST.
-                    # Ensure tool_calls are converted to dictionaries for the OpenAI API.
                     messages_for_llm.append(Message(
                         role="assistant",
                         tool_calls=llm_response_or_tool_call.tool_calls
@@ -230,60 +271,57 @@ class ChatService:
                     # Process ALL tool calls suggested by the LLM
                     tool_outputs = []
                     for tool_call_dict in llm_response_or_tool_call.tool_calls:
-                        # Convert the Pydantic ToolCall object to a dictionary
                         function_name = tool_call_dict["function"]["name"]
                         function_args_str = tool_call_dict["function"]["arguments"]
-                        tool_call_id = tool_call_dict["id"] # Get the tool_call_id from the dict
+                        tool_call_id = tool_call_dict["id"]
 
                         try:
-                            # Attempt to parse function arguments from JSON string
                             function_args = json.loads(function_args_str)
                         except json.JSONDecodeError:
-                            # Invalid argument format – report back to LLM
                             error_message = f"Error: LLM returned invalid function arguments for {function_name}: {function_args_str}"
-                            # Even for an error, we must provide a tool response for this tool_call_id
                             tool_outputs.append(Message(role="tool", content=error_message, name=function_name, tool_call_id=tool_call_id))
-                            print(error_message)
-                            continue  # Skip to the next tool_call in the list
+                            continue
 
-                        print(f"✨ LLM suggested calling: {function_name} with args: {function_args}")
-
-                        function_response_content = "Lo siento, no pude ejecutar la herramienta."
+                        # Default values for tool response
+                        llm_tool_response_string = "Lo siento, no pude ejecutar la herramienta."
+                        current_tool_projects: List[Project] = []
 
                         try:
                             # Attempt to execute the function from the appropriate client
                             if hasattr(self.data_service_client, function_name):
                                 method = getattr(self.data_service_client, function_name)
                                 result = await method(**function_args)
-                                if function_name == "get_financial_assessment":
-                                    function_response_content = self._format_financial_assessment_response(result)
-                                else:
-                                    function_response_content = self._format_data_service_response(function_name, result)
+                                llm_tool_response_string, current_tool_projects = self._format_data_service_response(function_name, result)
 
                             elif hasattr(self.embedding_service_client, function_name):
                                 method = getattr(self.embedding_service_client, function_name)
                                 result = await method(**function_args)
-                                function_response_content = self._format_embedding_service_response(function_name, result)
+                                llm_tool_response_string, current_tool_projects = self._format_embedding_service_response(function_name, result)
 
                             elif hasattr(self.llm_client, function_name):
-                                function_response_content = "No se permite llamar a funciones internas del LLM."
+                                llm_tool_response_string = "No se permite llamar a funciones internas del LLM."
+                                current_tool_projects = []
 
                             else:
-                                function_response_content = f"Error: The function {function_name} does not exist or is not accessible."
+                                llm_tool_response_string = f"Error: The function {function_name} does not exist or is not accessible."
+                                current_tool_projects = []
+
                         except Exception as e:
-                            # Catch any runtime errors during tool execution
                             print(f"❌ Error during tool execution for {function_name}: {e}")
-                            function_response_content = f"Error al ejecutar la herramienta {function_name}: {str(e)}"
+                            llm_tool_response_string = f"Error al ejecutar la herramienta {function_name}: {str(e)}"
+                            current_tool_projects = []
 
+                        print(f"✅ Tool '{function_name}' responded: {llm_tool_response_string[:200]}...")
 
-                        print(f"✅ Tool '{function_name}' responded: {function_response_content[:200]}...")
+                        # Add projects from this tool call to the accumulated list
+                        all_recommended_projects.extend(current_tool_projects)
 
                         # Add EACH tool's response as a separate tool message
                         tool_outputs.append(Message(
                             role="tool",
                             name=function_name,
-                            content=function_response_content,
-                            tool_call_id=tool_call_id # <-- CRITICAL: Include the tool_call_id here
+                            content=llm_tool_response_string,
+                            tool_call_id=tool_call_id
                         ))
 
                     # After processing ALL tool calls in the current LLM turn,
@@ -291,112 +329,137 @@ class ChatService:
                     messages_for_llm.extend(tool_outputs)
 
                     # Continue the loop so the LLM can use the combined tool outputs to finalize the reply
-                    continue 
+                    continue
 
                 else:
-                    # If we reach here, the LLM didn't return a response or tool call. This shouldn't happen normally.
                     print("❌ LLM did not return text or tool calls.")
-                    return ChatResponse(response_message="Lo siento, ocurrió un error al procesar tu solicitud.")
+                    return ChatResponse(response_message="Lo siento, ocurrió un error al procesar tu solicitud.", recommended_projects=all_recommended_projects)
 
             except Exception as e:
-                # General error while calling the LLM or tool
                 print(f"❌ Error during message handling or tool execution: {e}")
-                return ChatResponse(response_message="Lo siento, estoy teniendo problemas para responder en este momento. Por favor, intenta más tarde.")
-        
+                return ChatResponse(response_message="Lo siento, estoy teniendo problemas para responder en este momento. Por favor, intenta más tarde.", recommended_projects=all_recommended_projects)
+
         # If maximum tool call attempts are exceeded without resolution
         print("⚠️ Maximum tool calls exceeded or LLM did not finalize response.")
-        return ChatResponse(response_message="Lo siento, no pude completar tu solicitud después de varios intentos")
+        return ChatResponse(response_message="Lo siento, no pude completar tu solicitud después de varios intentos", recommended_projects=all_recommended_projects)
 
     # --- Métodos Auxiliares para Formatear Respuestas de Herramientas ---
     # Estos métodos convierten los objetos Python obtenidos de los servicios en texto
-    # que el LLM pueda entender y usar para generar su respuesta.
-    def _format_data_service_response(self, function_name: str, data: Any) -> str:
+    # que el LLM pueda entender y usar para generar su respuesta, y también devuelven
+    # la lista de proyectos relevantes.
+    def _format_data_service_response(self, function_name: str, data: Any) -> Tuple[str, List[Project]]:
+        projects_to_return: List[Project] = []
+        response_string = ""
+
         if function_name == "get_filtered_projects":
             if not data:
-                return "No se encontraron proyectos con los criterios especificados."
-            
-            # Formatear una lista de proyectos para el LLM
-            formatted_projects = []
-            for project in data[:5]: # Limitar para no saturar el prompt
-                amenities = project.amenities if project.amenities else "No especificado"
-                formatted_projects.append(
-                    f"- {project.project_name}: Ubicado en {project.city}, {project.type_property}. "
-                    f"Precio: ${project.price_min if project.price_max else 'N/A'}. "
-                    f"Habitaciones: {project.bedrooms_min if project.bedrooms_min else 'N/A'}. "
-                    f"Amenidades: {amenities}."
-                )
-            return "Se encontraron los siguientes proyectos:\n" + "\n".join(formatted_projects) + "\n(Y posiblemente más proyectos con estos criterios.)"
+                response_string = "No se encontraron proyectos con los criterios especificados."
+            else:
+                try:
+                    projects_to_return = []
+                    for p in data[:5]:
+                        if isinstance(p, Project):
+                            projects_to_return.append(p)
+                        elif hasattr(p, "model_dump"):
+                            # Viene de otro modelo Pydantic (como data_service.models.project.Project)
+                            projects_to_return.append(Project(**p.model_dump()))
+                        elif isinstance(p, dict):
+                            projects_to_return.append(Project(**p))
+                        else:
+                            print(f"❗ Tipo de dato inesperado: {type(p)}")
+                except Exception as e:
+                    print(f"❌ Error al convertir datos a Project en get_filtered_projects: {e}")
+                    projects_to_return = []
+                if len(data) > 5:
+                    response_string += "\n(Y posiblemente más proyectos con estos criterios.)"
 
         elif function_name == "get_project_by_id":
             if not data:
-                return "No se encontró el proyecto con el ID especificado."
-            amenities_text = data.amenities if data.amenities else "No especificado"
+                response_string = "No se encontró el proyecto con el ID especificado."
+            else:
+                project_data_as_dict = None
+                if isinstance(data, dict):
+                    project_data_as_dict = data
+                elif hasattr(data, 'dict'): # Para modelos Pydantic v1
+                    project_data_as_dict = data.dict()
+                elif hasattr(data, 'model_dump'): # Para modelos Pydantic v2
+                    project_data_as_dict = data.model_dump()
+                else:
+                    print(f"Advertencia: Tipo de dato inesperado para Project en get_project_by_id: {type(data)}. Intentando serializar a JSON.")
+                    try:
+                        project_data_as_dict = json.loads(json.dumps(data))
+                    except Exception as e:
+                        print(f"Error al serializar tipo inesperado a JSON: {e}")
+                        project_data_as_dict = {}
 
-            return (
-                f"Detalles del proyecto '{data.project_name}' (ID: {data.id}):\n" # Use project_name
-                f"Ubicación: {data.city}, {data.zone}\n" # Use project.city and project.zone
-                f"Tipo: {data.type_property if data.type_property else 'N/A'}\n" # Use project.type_property
-                f"Precios: Desde ${data.price_min if data.price_min else 'N/A'} hasta ${data.price_max if data.price_max else 'N/A'}\n" # Use price_min, price_max
-                f"Habitaciones: {data.bedrooms_min if data.bedrooms_min else 'N/A'}" # Use bedrooms_min
-                # Your Project model doesn't have bedrooms_max, so either add it or remove this part
-                # If you want to show a range, you'll need bedrooms_max in your model and JSON.
-                # For now, I'll remove bedrooms_max and bathrooms_max since they're not in your model
-                # or you'll need to define them with aliases in Project.
-                f"Baños: {data.bedrooms_min if data.bedrooms_min else 'N/A'}\n" # Assuming you add bedrooms_min to Project model
-                # Your Project model doesn't have area_maxima_m2_hasta, use min_area_sqm if that's what you have
-                f"Área: {data.area_min_square if data.area_min_square else 'N/A'} m²\n" # Assuming you add min_area_sqm to Project model
-                f"Estado: {data.status if data.status else 'N/A'}\n" # Use project.status
-                #f"Fecha de Entrega: {data.delivery_date_estimated if project.delivery_date_estimated else 'N/A'}\n" # Use delivery_date_estimated
-                f"Amenidades: {amenities_text}\n" # Use amenities_text from above
-                f"URL: {data.image_url if data.image_url else 'N/A'}" # Using image_url as closest to url_inmueble
-            )
-        return json.dumps(data) # Por defecto, serializar a JSON si no hay formato específico
+                project_instance: Optional[Project] = None
+                if project_data_as_dict:
+                    try:
+                        project_instance = Project(**project_data_as_dict)
+                    except Exception as e:
+                        print(f"Error al crear Project desde diccionario en get_project_by_id: {e}")
 
-    def _format_embedding_service_response(self, function_name: str, data: Any) -> str:
+                if project_instance:
+                    projects_to_return = [project_instance]
+                    response_string = ""
+                else:
+                    response_string = "No se pudo obtener la información completa del proyecto."
+        else:
+            response_string = json.dumps(data) # Por defecto, serializar a JSON si no hay formato específico
+
+        return response_string, projects_to_return
+
+    def _format_embedding_service_response(self, function_name: str, data: Any) -> Tuple[str, List[Project]]:
+        projects_to_return: List[Project] = []
+        response_string = ""
+
         if function_name == "search_similar_projects":
             if not data:
-                return "No se encontraron proyectos similares con los criterios de búsqueda semántica."
-            
-            # Aquí podrías opcionalmente llamar al data_service para obtener los nombres de estos IDs
-            # Pero para mantenerlo simple, devolvemos los IDs. El LLM puede pedir detalles si lo necesita.
-            return f"Se encontraron proyectos con IDs similares: {', '.join(data)}. El LLM puede preguntar por detalles de estos IDs si es necesario."
-        return json.dumps(data)
-    
-    def _format_financial_assessment_response(self, data: Dict[str, Any]) -> str:
+                response_string = "No se encontraron proyectos similares con los criterios de búsqueda semántica."
+            else:
+                response_string = f"Se encontraron proyectos con IDs similares: {', '.join(data)}. El LLM puede preguntar por detalles de estos IDs si es necesario."
+        else:
+            response_string = json.dumps(data)
+
+        return response_string, projects_to_return
+
+    def _format_financial_assessment_response(self, data: Dict[str, Any]) -> Tuple[str, List[Project]]:
         """
         Formatea la respuesta del cálculo financiero y de inversión para que el LLM la entienda.
+        No devuelve proyectos, por lo que la lista de proyectos estará vacía.
         """
+        response_string = ""
         if "error" in data:
-            return f"Error en el cálculo financiero: {data['error']}"
+            response_string = f"Error en el cálculo financiero: {data['error']}"
+        else:
+            def format_currency(value):
+                return "{:,.0f}".format(value).replace(",", "_").replace("_", ",")
 
-        # Formateo de números para mejor lectura
-        def format_currency(value):
-            return "{:,.0f}".format(value).replace(",", "_").replace("_", ",")
+            response_parts = [
+                f"Resultados de la estimación financiera para el proyecto de ${format_currency(data['project_price'])} COP:",
+                f"- **Cuota inicial estimada (30%)**: ${format_currency(data['down_payment'])} COP",
+                f"- **Monto del préstamo estimado (70%)**: ${format_currency(data['loan_amount'])} COP",
+                f"- **Plazo del préstamo**: {data['loan_term_years']} años",
+                f"- **Tasa de interés anual simulada**: {data['annual_interest_rate']}%",
+                f"- **Cuota mensual estimada del préstamo**: ${format_currency(data['monthly_loan_payment'])} COP",
+                f"- **Total pagado con intereses durante el plazo del préstamo**: ${format_currency(data['total_paid_with_interest'])} COP",
+                f"- **Mensaje de asequibilidad**: {data['affordability_message']}"
+            ]
 
-        response_parts = [
-            f"Resultados de la estimación financiera para el proyecto de ${format_currency(data['project_price'])} COP:",
-            f"- **Cuota inicial estimada (30%)**: ${format_currency(data['down_payment'])} COP",
-            f"- **Monto del préstamo estimado (70%)**: ${format_currency(data['loan_amount'])} COP",
-            f"- **Plazo del préstamo**: {data['loan_term_years']} años",
-            f"- **Tasa de interés anual simulada**: {data['annual_interest_rate']}%",
-            f"- **Cuota mensual estimada del préstamo**: ${format_currency(data['monthly_loan_payment'])} COP",
-            f"- **Total pagado con intereses durante el plazo del préstamo**: ${format_currency(data['total_paid_with_interest'])} COP",
-            f"- **Mensaje de asequibilidad**: {data['affordability_message']}"
-        ]
+            if "roi_percentage" in data:
+                response_parts.append("\n--- Análisis de Inversión ---")
+                response_parts.append(f"- **Ingreso de alquiler mensual estimado**: ${format_currency(data['expected_rental_income_monthly'])} COP")
+                response_parts.append(f"- **Tasa de apreciación anual esperada**: {data['expected_annual_appreciation_rate']}%")
+                response_parts.append(f"- **Costos operativos anuales (% del valor del proyecto)**: {data['annual_operating_costs_percentage']}%")
+                response_parts.append(f"- **Horizonte de inversión**: {data['investment_horizon_years']} años")
+                response_parts.append(f"- **Valor futuro estimado del inmueble**: ${format_currency(data['future_property_value'])} COP")
+                response_parts.append(f"- **Flujo de caja anual estimado**: ${format_currency(data['annual_cash_flow'])} COP")
+                response_parts.append(f"- **Retorno de Inversión (ROI) estimado**: {data['roi_percentage']}%")
+            elif "investment_analysis_message" in data:
+                response_parts.append(f"\n--- Análisis de Inversión ---")
+                response_parts.append(data['investment_analysis_message'])
 
-        # Añadir información de inversión si está disponible
-        if "roi_percentage" in data:
-            response_parts.append("\n--- Análisis de Inversión ---")
-            response_parts.append(f"- **Ingreso de alquiler mensual estimado**: ${format_currency(data['expected_rental_income_monthly'])} COP")
-            response_parts.append(f"- **Tasa de apreciación anual esperada**: {data['expected_annual_appreciation_rate']}%")
-            response_parts.append(f"- **Costos operativos anuales (% del valor del proyecto)**: {data['annual_operating_costs_percentage']}%")
-            response_parts.append(f"- **Horizonte de inversión**: {data['investment_horizon_years']} años")
-            response_parts.append(f"- **Valor futuro estimado del inmueble**: ${format_currency(data['future_property_value'])} COP")
-            response_parts.append(f"- **Flujo de caja anual estimado**: ${format_currency(data['annual_cash_flow'])} COP")
-            response_parts.append(f"- **Retorno de Inversión (ROI) estimado**: {data['roi_percentage']}%")
-        elif "investment_analysis_message" in data:
-            response_parts.append(f"\n--- Análisis de Inversión ---")
-            response_parts.append(data['investment_analysis_message'])
+            response_parts.append("\nEl LLM debe usar esta información para responder al usuario.")
+            response_string = "\n".join(response_parts)
 
-        response_parts.append("\nEl LLM debe usar esta información para responder al usuario.")
-        return "\n".join(response_parts)
+        return response_string, [] # No hay proyectos en la respuesta financiera

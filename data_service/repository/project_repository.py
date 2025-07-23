@@ -85,24 +85,27 @@ class ProjectRepository:
             print(f"Proyectos restantes después de Tipo de Propiedad: {len(filtered_df)}") # New debug line
         if min_price is not None:
             print(f"Aplicando filtro por Precio Mínimo: '{min_price}'") # New debug line
-            filtered_df = filtered_df[filtered_df['precio_minimo_desde'] >= min_price]
+            filtered_df = filtered_df[filtered_df['precio_minimo_desde'].fillna(0) >= min_price]
             print(f"Proyectos restantes después de Precio Mínimo: {len(filtered_df)}") # New debug line
         if max_price is not None:
-            print(f"Aplicando filtro por Precio Máximo: '{max_price}' (usando precio_minimo_desde)") # New debug line
-            # This is the line we've been working on, ensure it's changed to precio_minimo_desde
-            filtered_df = filtered_df[filtered_df['precio_minimo_desde'] <= max_price]
-            print(f"Proyectos restantes después de Precio Máximo: {len(filtered_df)}") # New debug line
+            print(f"Aplicando filtro por Precio Máximo: '{max_price}' (usando precio_minimo_desde o precio_maximo_hasta)")
+            # Lógica mejorada que evalúa ambos campos y permite valores nulos
+            filtered_df = filtered_df[
+                (filtered_df['precio_minimo_desde'].fillna(0) <= max_price) |
+                (filtered_df['precio_maximo_hasta'].fillna(0) <= max_price)
+            ]
+            print(f"Proyectos restantes después de Precio Máximo: {len(filtered_df)}")
         if min_bedrooms is not None:
             print(f"Aplicando filtro por Habitaciones Mínimas: '{min_bedrooms}'") # New debug line
-            filtered_df = filtered_df[filtered_df['habitaciones_minimo_desde'] >= min_bedrooms]
+            filtered_df = filtered_df[filtered_df['habitaciones_minimo_desde'].fillna(0) >= min_bedrooms]
             print(f"Proyectos restantes después de Habitaciones Mínimas: {len(filtered_df)}") # New debug line
         if min_bathrooms is not None:
             print(f"Aplicando filtro por Baños Mínimos: '{min_bathrooms}'") # New debug line
-            filtered_df = filtered_df[filtered_df['baños'] >= min_bathrooms]
+            filtered_df = filtered_df[filtered_df['banios_minimo_desde'].fillna(0) >= min_bathrooms]
             print(f"Proyectos restantes después de Baños Mínimos: {len(filtered_df)}") # New debug line
         if min_area_sqm is not None:
             print(f"Aplicando filtro por Área Mínima (m²): '{min_area_sqm}'") # New debug line
-            filtered_df = filtered_df[filtered_df['area_m2'] >= min_area_sqm]
+            filtered_df = filtered_df[filtered_df['area_minima_m2_desde'].fillna(0) >= min_area_sqm]
             print(f"Proyectos restantes después de Área Mínima: {len(filtered_df)}") # New debug line
         if recommended_use:
             print(f"Aplicando filtro por Uso Recomendado: '{recommended_use}'") # New debug line
