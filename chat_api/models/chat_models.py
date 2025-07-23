@@ -17,15 +17,30 @@ class ChatRequest(BaseModel):
     current_message: str
     conversation_history: List[Message] = [] # List of previous messages
 
-class ChatResponse(BaseModel):
-    """
-    Represents the response from the chat API.
-    """
-    response_message: str
-    # You might want to include other metadata here, like:
-    # relevant_project_ids: List[str] = []
-    # debug_info: Optional[Dict[str, Any]] = None
+class Project(BaseModel):
+    id: str
+    nombre_proyecto: str
+    tipo: str
+    ciudad: str
+    precio_minimo_desde: Optional[float] = None
+    precio_maximo_hasta: Optional[float] = None
+    habitaciones_minimo_desde: Optional[int] = None
+    habitaciones_maximo_hasta: Optional[int] = None
+    banios_minimo_desde: Optional[int] = None
+    banios_maximo_hasta: Optional[int] = None
+    area_minima_m2_desde: Optional[float] = None
+    area_maxima_m2_hasta: Optional[float] = None
+    tipo_uso_recomendado: Optional[str] = None
+    descripcion: Optional[str] = None
+    url_proyecto: Optional[str] = None
+    url_imagen: Optional[str] = None
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    amenidades: Optional[List[str]] = []
 
+class ChatResponse(BaseModel):
+    response_message: str
+    recommended_projects: List[Project] = []
 
 class LLMRequest(BaseModel):
     messages: List[Message]

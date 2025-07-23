@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional
 import json
 
 from chat_api.config.settings import settings
-from chat_api.models.chat_models import Message, ChatRequest, ChatResponse, LLMResponse
+from chat_api.models.chat_models import Message, ChatRequest, ChatResponse, LLMResponse, Project
 from chat_api.services.llm_client import LLMClient
 from chat_api.services.data_client import DataServiceClient
 from chat_api.services.embedding_client import EmbeddingServiceClient
@@ -17,6 +17,47 @@ class ChatService:
         # Esto le da al LLM su "rol" y algunas instrucciones iniciales.
         # Define el mensaje del sistema para guiar al LLM.
         self.system_message_content = (
+        """
+            IMPORTANTE: Responde SIEMPRE en formato JSON puro. El formato esperado es:
+            RESPONDE EXCLUSIVAMENTE EN FORMATO JSON.
+            {
+            "response_message": "string",
+            "recommended_projects": [
+                {
+                "id": "string",
+                "nombre_proyecto": "string",
+                "tipo": "string",
+                "ciudad": "string",
+                "precio_minimo_desde": 1000000,
+                "precio_maximo_hasta": 2000000,
+                "habitaciones_minimo_desde": 2,
+                "habitaciones_maximo_hasta": 4,
+                "banios_minimo_desde": 2,
+                "banios_maximo_hasta": 3,
+                "area_minima_m2_desde": 60,
+                "area_maxima_m2_hasta": 80,
+                "tipo_uso_recomendado": "Residencial",
+                "descripcion": "Hermoso proyecto en zona norte de Bogotá",
+                "url_proyecto": "https://...",
+                "url_imagen": "https://...",
+                "latitud": 4.711,
+                "longitud": -74.0721,
+                "amenidades": ["Piscina", "Gimnasio"]
+                }
+            ]
+            }
+            ⚠️ SI NO HAY PROYECTOS QUE CUMPLAN CON LO SOLICITADO, DEBES DEVOLVER IGUALMENTE EL JSON CON `recommended_projects: []`.
+
+            ⚠️ NO ENVUELVAS NUNCA LA RESPUESTA EN BLOQUES DE CÓDIGO COMO ```json.
+
+            ⚠️ SI DEVUELVES TEXTO PLANO, NO SE MOSTRARÁ CORRECTAMENTE AL USUARIO.
+
+            NO uses markdown (```json). NO respondas con texto plano. Solo responde con ese JSON.
+            Si haces un análisis financiero usando la herramienta `get_financial_assessment`, DEBES incluir el análisis completo dentro del campo `response_message` del JSON final. **No repitas los detalles completos de los proyectos aquí si ya los incluiste en el campo `recommended_projects`.** Puedes referenciarlos brevemente si es necesario, pero no dupliques datos.
+            El campo `response_message` debe ser un texto completamente natural, redactado como si fuera parte de una conversación fluida. No uses saltos de línea (\n), listas con guiones (-), numeraciones, ni formato Markdown como negritas (**). Describe la información de manera continua y amigable. 
+            Mantén los valores importantes como precios (por ejemplo: $180,000,000 COP), porcentajes (por ejemplo: 12%) y unidades (como m² o número de habitaciones) exactamente como son para facilitar la visualización por parte del usuario.
+            Al final de tu respuesta DEBES incluir el análisis completo dentro del campo `response_message` del JSON final, si has presentado uno o varios proyectos, concluye con una frase amable como: "Si necesitas más información o buscas algo más específico, házmelo saber o algo mimilar dependiendo el contexto."
+            """ +
             "Eres un asistente de bienes raíces experto y amigable especializado en proyectos de vivienda "
             "en Colombia. Tu objetivo es ayudar a los usuarios a encontrar el proyecto ideal "
             "proporcionando información relevante, filtrando proyectos y respondiendo preguntas. "
@@ -215,8 +256,24 @@ class ChatService:
                 )
 
                 if llm_response_or_tool_call.response_content:
-                    # The LLM returned a final response directly — return it
-                    return ChatResponse(response_message=llm_response_or_tool_call.response_content)
+                    message_raw = llm_response_or_tool_call.response_content
+                    if isinstance(message_raw, str):
+                        try:
+                            parsed = json.loads(message_raw)
+                        except json.JSONDecodeError:
+                            return ChatResponse(response_message=message_raw, recommended_projects=[])
+                    elif isinstance(message_raw, dict):
+                        parsed = message_raw
+                    else:
+                        return ChatResponse(response_message=str(message_raw), recommended_projects=[])
+
+                    response_message = parsed.get("response_message", str(message_raw))
+                    raw_projects = parsed.get("recommended_projects", [])
+                    projects = [Project(**proj) for proj in raw_projects]
+                    return ChatResponse(
+                        response_message=response_message,
+                        recommended_projects=projects
+                    )
 
                 elif llm_response_or_tool_call.tool_calls:
                     tool_call_count += 1
@@ -243,10 +300,7 @@ class ChatService:
                             error_message = f"Error: LLM returned invalid function arguments for {function_name}: {function_args_str}"
                             # Even for an error, we must provide a tool response for this tool_call_id
                             tool_outputs.append(Message(role="tool", content=error_message, name=function_name, tool_call_id=tool_call_id))
-                            print(error_message)
                             continue  # Skip to the next tool_call in the list
-
-                        print(f"✨ LLM suggested calling: {function_name} with args: {function_args}")
 
                         function_response_content = "Lo siento, no pude ejecutar la herramienta."
 
@@ -274,7 +328,6 @@ class ChatService:
                             # Catch any runtime errors during tool execution
                             print(f"❌ Error during tool execution for {function_name}: {e}")
                             function_response_content = f"Error al ejecutar la herramienta {function_name}: {str(e)}"
-
 
                         print(f"✅ Tool '{function_name}' responded: {function_response_content[:200]}...")
 
@@ -314,7 +367,7 @@ class ChatService:
         if function_name == "get_filtered_projects":
             if not data:
                 return "No se encontraron proyectos con los criterios especificados."
-            
+
             # Formatear una lista de proyectos para el LLM
             formatted_projects = []
             for project in data[:5]: # Limitar para no saturar el prompt
